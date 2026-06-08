@@ -1,6 +1,9 @@
 package edu.touro.las.mcon364.test2;
 
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * ══════════════════════════════════════════════════════════════
@@ -49,13 +52,13 @@ import java.util.Map;
  */
 public class InventoryManager {
 
-    // TODO: initialise this field with a thread-safe Map implementation
-    //       — which Map implementation from the lesson guarantees thread-safe reads and writes?
-    private final Map<String, Integer> stock = null; 
+    // CORRECT (you had this right): ConcurrentHashMap gives thread-safe reads/writes,
+    // and its merge()/compute() methods run atomically (no lost updates).
+    private final ConcurrentMap<String, Integer> stock = new ConcurrentHashMap<>();
 
-    // TODO: declare and initialise a private final field called totalUnitsAdded that tracks the
-    //       running total of units ever added, thread-safely, without using synchronized
-
+    // CORRECT (you had this right): AtomicInteger lets us add concurrently
+    // without the `synchronized` keyword.
+    private final AtomicInteger totalUnitsAdded = new AtomicInteger(0);
 
     /**
      * Adds {@code qty} units of {@code item} to inventory.
@@ -65,14 +68,18 @@ public class InventoryManager {
      * @throws IllegalArgumentException if qty ≤ 0
      */
     public void addStock(String item, int qty) {
-        // TODO: validate qty > 0
+        // Reject bad input first. (You had this right.)
+        if (qty <= 0)
+            throw new IllegalArgumentException();
 
-        // TODO: atomically add qty to the item's current stock
-        //       Hint: the thread-safe Map implementation you chose has a merge() method
-        //             that can do this in one atomic step
+        // merge() = "if absent put qty, else combine old+qty". Integer::sum does old+qty.
+        // The whole read-modify-write happens atomically inside the map. (You had this right.)
+        stock.merge(item, qty, Integer::sum);
 
-        // TODO: atomically add qty to totalUnitsAdded
-
+        // Atomically bump the global counter. (You had this right.)
+        totalUnitsAdded.addAndGet(qty);
+        // NOTE: I removed your `else { ... }` around merge(). It worked, but since the
+        // `if` branch throws, the `else` is unnecessary — flatter code is easier to read.
     }
 
     /**
@@ -84,31 +91,55 @@ public class InventoryManager {
      * @throws IllegalArgumentException if qty ≤ 0
      */
     public boolean removeStock(String item, int qty) {
-        // TODO: validate qty > 0
+        if (qty <= 0)
+            throw new IllegalArgumentException();
 
-
-        // TODO: atomically check-and-decrement.
-        //       If current stock >= qty, subtract qty.
-        //       Otherwise, leave stock unchanged.
-        //       Return true if stock was depleted, false if unchanged
-        //       Hint: your chosen Map has a compute() method that lets you
-        //             read and write in one atomic step.
-
-        return false; //placeholder
+        // ───────────────────────────────────────────────────────────────────────
+        // YOUR ERRORS HERE (this whole block):
+        //   Integer currStock = stock.get(item);          // (1) NullPointerException if item
+        //                                                  //     was never added (get() returns null,
+        //                                                  //     then `currStock >= qty` unboxes null).
+        //   if (currStock >= qty) {                        // (2) NOT ATOMIC: you read with get(), then
+        //       stock.compute(item, currStock(i->i-qty))); //     write with compute() as a SEPARATE step.
+        //       return true;                               //     Another thread can change stock in between,
+        //   }                                              //     so two threads can both "succeed" on the
+        //                                                  //     last unit -> stock goes negative.
+        //                                                  // (3) `currStock(i->i-qty)` is not valid Java —
+        //                                                  //     compute() needs a (key,value)->newValue
+        //                                                  //     BiFunction, and the parentheses/semicolons
+        //                                                  //     were unbalanced (it didn't compile).
+        // ───────────────────────────────────────────────────────────────────────
+        // FIX: do the check AND the decrement inside ONE compute() call so the whole
+        // read-modify-write is a single atomic step. A 1-element boolean array lets the
+        // lambda report back whether it actually removed anything (a lambda can't assign
+        // to a plain local variable, but it CAN mutate the contents of an array).
+        boolean[] removed = {false};
+        stock.compute(item, (key, current) -> {
+            if (current != null && current >= qty) {
+                removed[0] = true;
+                return current - qty;     // enough stock: subtract
+            }
+            return current;               // not enough (or absent): leave unchanged
+        });
+        return removed[0];
     }
 
     /**
      * Returns the current stock for {@code item}, or 0 if unknown.
      */
     public int getStock(String item) {
-       return 0; //placeholder
+        // YOUR ERROR: `return stock.get(item);` returns null for an unknown item,
+        // and auto-unboxing null into an int throws NullPointerException.
+        // FIX: getOrDefault returns 0 when the item was never added (the spec).
+        return stock.getOrDefault(item, 0);
     }
 
     /**
      * Returns the cumulative number of units ever added (all items combined).
      */
     public int getTotalUnitsAdded() {
-        return 0; //placeholder
+        // CORRECT: just read the atomic counter. (You had this right.)
+        return totalUnitsAdded.get();
     }
 
     /**
@@ -116,8 +147,10 @@ public class InventoryManager {
      * Callers cannot use the returned map to change internal state.
      */
     public Map<String, Integer> getSnapshot() {
-        // TODO: return a defensive copy
-        return null; //placeholder
+        // YOUR ERROR: `return stock;` handed the caller the LIVE internal map, so
+        // they could mutate your private state (e.g. snapshot.clear()). It's also
+        // not "unmodifiable" as required.
+        // FIX: Map.copyOf makes an immutable defensive copy.
+        return Map.copyOf(stock);
     }
 }
-
