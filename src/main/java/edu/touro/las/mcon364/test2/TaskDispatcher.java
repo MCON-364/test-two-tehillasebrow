@@ -43,16 +43,16 @@ import java.util.stream.Collectors;
  * TODO 6 — getResults() / getCompletedCount()
  *   Reads must be guarded the same way writes are.
  *   getResults() must return a copy so callers cannot modify internal state.
- *   
+ *
  */
 public class TaskDispatcher {
 
     public static final int POOL_SIZE = 4;
 
-    // TODO 1: replace null with an appropriate class
+    // CORRECT: a fixed thread pool caps the number of worker threads at POOL_SIZE.
     private final ExecutorService pool = Executors.newFixedThreadPool(POOL_SIZE);
 
-    // TODO 2: replace null — which Lock implementation lets you lock and unlock explicitly?
+    // CORRECT: ReentrantLock is the Lock that you lock()/unlock() explicitly.
     private final Lock lock = new ReentrantLock();
     // provided — do not change
     private final List<String> results = new ArrayList<>();
@@ -68,48 +68,66 @@ public class TaskDispatcher {
      *   You have to use streams!
      */
     public List<Future<String>> dispatch(List<String> tasks) {
-        // TODO 3
-        return tasks.stream().map(String::toUpperCase).map(this::recordResult).toList();
-         //placeholder
+        // ───────────────────────────────────────────────────────────────────────
+        // YOUR ERROR (was):
+        //   return tasks.stream().map(String::toUpperCase).map(this::recordResult).toList();
+        //   (1) It never touched `pool`, so NOTHING ran on a worker thread — all the
+        //       work happened right here on the calling thread (not "dispatching").
+        //   (2) `.map(this::recordResult)` does not compile: map() needs a function that
+        //       RETURNS a value, but recordResult returns void.
+        //   (3) The method must return List<Future<String>> (a handle per task), and you
+        //       were returning a List<String> of the strings themselves.
+        // ───────────────────────────────────────────────────────────────────────
+        // FIX: for each task, submit a Callable to the pool. pool.submit(...) returns a
+        // Future<String> immediately (it does NOT block / wait), which is the "handle"
+        // the caller uses later to fetch the result.
+        return tasks.stream()
+                .map(task -> pool.submit(() -> {
+                    String upper = task.toUpperCase(); // (a) upper-case
+                    recordResult(upper);               // (b) record it (thread-safe)
+                    return upper;                      // (c) return it -> becomes the Future's value
+                }))
+                .collect(Collectors.toList());
     }
 
     public void recordResult(String result) {
-        //TODO 4
+        // YOUR ERROR: you only added to `results` and NEVER incremented completedCount,
+        // so the two fell out of sync — violating the core requirement of this problem.
+        // FIX: update BOTH inside the SAME lock so no thread can observe them mismatched.
         lock.lock();
         try {
             results.add(result);
+            completedCount++;
         } finally {
-            lock.unlock();
+            lock.unlock(); // CORRECT: unlocking in finally guarantees release even on exception.
         }
     }
 
     public void shutdown() throws InterruptedException {
-
-        //TODO 5
-
-        pool.shutdown();
-        pool.awaitTermination(30, TimeUnit.SECONDS);
+        // YOUR ERROR: you waited 30 seconds; the spec says wait UP TO 10 seconds.
+        pool.shutdown();                                // stop accepting new tasks
+        pool.awaitTermination(10, TimeUnit.SECONDS);    // wait up to 10s for running tasks
     }
 
-    public  List<String> getResults() {
-        //TODO 6
+    public List<String> getResults() {
+        // CORRECT: read under the same lock as the writes, and return a COPY so the
+        // caller cannot mutate our internal list.
         lock.lock();
         try {
             return new ArrayList<>(results);
         } finally {
             lock.unlock();
         }
-         //placeholder
     }
 
-    public  int getCompletedCount() {
-        //TODO 6
+    public int getCompletedCount() {
+        // CORRECT: guarded read, same lock as the writers.
         lock.lock();
         try {
             return completedCount;
         } finally {
             lock.unlock();
-        }//placeholder
+        }
     }
 
 }

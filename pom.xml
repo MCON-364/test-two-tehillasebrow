@@ -34,6 +34,13 @@
                     <useModulePath>false</useModulePath>
                 </configuration>
             </plugin>
+            <!--
+                YOUR ERROR: you added a maven-compiler-plugin forcing source/target 7.
+                This project uses Java 21 features (records, `.toList()`, Map.copyOf,
+                lambdas) and the pom already sets <maven.compiler.release>21</maven.compiler.release>
+                above. Java 7 would make the WHOLE project fail to compile, so this
+                plugin block has been removed.
+            -->
         </plugins>
     </build>
 
