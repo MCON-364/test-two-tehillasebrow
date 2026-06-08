@@ -110,11 +110,13 @@ public class TaskDispatcher {
     }
 
     public List<String> getResults() {
-        // CORRECT: read under the same lock as the writes, and return a COPY so the
-        // caller cannot mutate our internal list.
+        // Read under the same lock as the writes, and return a copy.
+        // NOTE: the test requires the returned list to be UNMODIFIABLE (calling add()
+        // on it must throw). new ArrayList<>(results) is a copy but is still modifiable,
+        // so we wrap it with List.copyOf to make it immutable.
         lock.lock();
         try {
-            return new ArrayList<>(results);
+            return List.copyOf(results);
         } finally {
             lock.unlock();
         }

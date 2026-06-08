@@ -70,9 +70,9 @@ public class ParallelReportBuilder {
     public ReportSummary generateReport(List<List<Transaction>> batches, int workers)
             throws InterruptedException, ExecutionException, IllegalArgumentException {
 
-        // 2A: validate inputs. (You only checked workers == 0; negatives and a null
-        //     list also need rejecting.)
-        if (batches == null || workers <= 0)
+        // 2A: validate inputs. (You only checked workers == 0; the tests also require
+        //     rejecting a null list, an EMPTY list, and non-positive workers.)
+        if (batches == null || batches.isEmpty() || workers <= 0)
             throw new IllegalArgumentException();
 
         // 2B: a fixed thread pool is the right structure for "many independent tasks".
